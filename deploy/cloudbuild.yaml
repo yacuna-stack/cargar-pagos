@@ -1,0 +1,15 @@
+steps:
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --source=.
+      - --region=${_DEPLOY_REGION}
+      - --platform=${_PLATFORM}
+      - --allow-unauthenticated
+      - --set-env-vars=FUNCTION_TARGET=app
+
+options:
+  logging: CLOUD_LOGGING_ONLY
