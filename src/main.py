@@ -14,7 +14,7 @@ from src.pipelines.cargar_pagos import ejecutar_carga_pagos
 from src.pipelines.pago_honorario import ejecutar_honorarios
 from src.pipelines.cuotas_concepto import ejecutar_cuotas_concepto
 from src.pipelines.historico import ejecutar_historico
-from src import SheetsIO
+from src.utils.sheets_io import SheetsIO
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("main")
