@@ -1,0 +1,14 @@
+[project]
+name = "procesar-pagos"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "flask>=3.0",
+    "gspread>=6.0",
+    "google-auth>=2.0",
+    "requests>=2.31",
+    "gunicorn>=21.2",
+]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
