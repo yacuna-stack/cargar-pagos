@@ -4,7 +4,7 @@ Usa gspread para operaciones batch eficientes.
 """
 
 import logging
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Tuple
 
 import gspread
 import google.auth
@@ -38,7 +38,22 @@ class SheetsIO:
         self.sh = self.gc.open_by_key(spreadsheet_id)
         self._hoja_cache: Dict[str, gspread.Worksheet] = {}
 
-    # ─── Lectura ───
+    # ─────────────────────────────────────────────────────────
+    # Helpers internos
+    # ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _col_letter(col_1based: int) -> str:
+        """Convierte número de columna 1-based a letra (A, B, ..., AA, AB...)."""
+        return gspread.utils.rowcol_to_a1(1, col_1based).rstrip("1")
+
+    def _get_ws(self, nombre: str) -> gspread.Worksheet:
+        """Obtiene worksheet por nombre (sin cache, para hojas no mensuales)."""
+        return self.sh.worksheet(nombre)
+
+    # ─────────────────────────────────────────────────────────
+    # Lectura
+    # ─────────────────────────────────────────────────────────
 
     def leer_hoja(self, nombre: str) -> List[List[Any]]:
         """Lee todos los datos de una hoja (incluye header)."""
@@ -57,14 +72,16 @@ class SheetsIO:
         """Lee 'Informacion imagenes' sin header."""
         return self.leer_hoja_sin_header("Informacion imagenes")
 
-    def leer_pro(self) -> tuple:
+    def leer_pro(self) -> Tuple[List[Any], List[List[Any]]]:
         """Lee hoja 'Pro'. Retorna (header, data_rows)."""
         data = self.leer_hoja("Pro")
         if not data:
             return [], []
         return data[0], data[1:]
 
-    # ─── Hojas mensuales ───
+    # ─────────────────────────────────────────────────────────
+    # Hojas mensuales
+    # ─────────────────────────────────────────────────────────
 
     def obtener_o_crear_hoja_mes(self, nombre: str) -> gspread.Worksheet:
         """Obtiene o crea una hoja mensual con headers."""
@@ -100,14 +117,12 @@ class SheetsIO:
             return
         ws = self.obtener_o_crear_hoja_mes(nombre)
 
-        cell_list = [[v] for v in valores]
-
-        # col_idx es 0-based; convertir a letra A..Z, AA.. (simple y correcto)
-        col_num = col_idx + 1  # 1-based
-        col_letter = gspread.utils.rowcol_to_a1(1, col_num).rstrip("1")  # "A1" -> "A"
+        # col_idx es 0-based; pasar a 1-based y convertir a letra
+        col_num = col_idx + 1
+        col_letter = self._col_letter(col_num)
 
         rng = f"{col_letter}2:{col_letter}{len(valores) + 1}"
-        ws.update(rng, cell_list, value_input_option="USER_ENTERED")
+        ws.update(rng, [[v] for v in valores], value_input_option="USER_ENTERED")
 
     def actualizar_dos_columnas_mes(self, nombre: str, col_e_vals: List[Any], col_g_vals: List[Any]):
         """Actualiza columnas E (concepto) y G (cuota) de la hoja mensual."""
@@ -119,7 +134,9 @@ class SheetsIO:
         ws.update(f"E2:E{total + 1}", [[v] for v in col_e_vals], value_input_option="USER_ENTERED")
         ws.update(f"G2:G{total + 1}", [[v] for v in col_g_vals], value_input_option="USER_ENTERED")
 
-    # ─── Escritura general ───
+    # ─────────────────────────────────────────────────────────
+    # Escritura general
+    # ─────────────────────────────────────────────────────────
 
     def escribir_estado_info(self, estados: List[str], col: int = 16):
         """
@@ -130,9 +147,17 @@ class SheetsIO:
             return
         try:
             ws = self.sh.worksheet("Informacion imagenes")
-            cell_list = [[s] for s in estados]
-            col_letter = chr(64 + col)  # 1->A, 16->P
-            ws.update(f"{col_letter}2:{col_letter}{len(estados) + 1}", cell_list, value_input_option="USER_ENTERED")
+
+            # Asegurar que exista la columna
+            if ws.col_count < col:
+                ws.add_cols(col - ws.col_count)
+
+            col_letter = self._col_letter(col)
+            ws.update(
+                f"{col_letter}2:{col_letter}{len(estados) + 1}",
+                [[s] for s in estados],
+                value_input_option="USER_ENTERED",
+            )
         except Exception as e:
             logger.warning(f"Error escribiendo estados: {e}")
 
@@ -150,18 +175,77 @@ class SheetsIO:
         try:
             ws = self.sh.worksheet("Informacion imagenes")
 
+            # Asegurar que exista la columna Q (17)
+            if ws.col_count < 17:
+                ws.add_cols(17 - ws.col_count)
+
             updates = []
             for idx, txt in marcas_q.items():
                 row_num = int(idx) + 2  # idx 0 -> fila 2
                 updates.append({"range": f"Q{row_num}", "values": [[str(txt)]]})
 
-            # batch_update pisa solo esas celdas
             ws.batch_update(updates, value_input_option="USER_ENTERED")
 
         except Exception as e:
             logger.warning(f"Error escribiendo estados honorarios en Q: {e}")
 
-    # ─── Histórico ───
+    def limpiar_y_escribir_info_col_q(self, logs_q: List[str]):
+        """
+        Limpia COMPLETA la columna Q (desde fila 2 hasta la última fila con datos),
+        y luego escribe logs_q (vector completo) en esa misma columna.
+
+        - logs_q debe tener longitud = cantidad de filas leídas por leer_info_imagenes()
+          (o sea, lastRow-1).
+        - Esto reproduce lo que hacía Apps Script:
+          setValues(logsP.map(x => [x])) pero asegurando limpiar primero.
+        """
+        if logs_q is None:
+            return
+
+        try:
+            ws = self.sh.worksheet("Informacion imagenes")
+            last_row = ws.row_count
+            used_last = ws.get_last_row()  # gspread Worksheet tiene get_last_row()
+
+            # Si get_last_row no existe (depende versión), fallback:
+            if not used_last:
+                used_last = ws.get_all_values()
+                used_last = len(used_last) if used_last else 1
+
+            # asegurar columna Q
+            if ws.col_count < 17:
+                ws.add_cols(17 - ws.col_count)
+
+            # rango real a limpiar/escribir (fila 2..)
+            n = len(logs_q)
+            if n == 0:
+                # igual limpiamos (por si había basura)
+                if used_last >= 2:
+                    ws.update(f"Q2:Q{used_last}", [[""] for _ in range(used_last - 1)], value_input_option="USER_ENTERED")
+                return
+
+            # 1) LIMPIAR (hasta el max entre used_last y n+1 para no dejar basura)
+            end_row = max(used_last, n + 1)
+            if end_row >= 2:
+                ws.update(
+                    f"Q2:Q{end_row}",
+                    [[""] for _ in range(end_row - 1)],
+                    value_input_option="USER_ENTERED",
+                )
+
+            # 2) ESCRIBIR logs nuevos (solo hasta n)
+            ws.update(
+                f"Q2:Q{n + 1}",
+                [[x] for x in logs_q],
+                value_input_option="USER_ENTERED",
+            )
+
+        except Exception as e:
+            logger.warning(f"Error limpiando/escribiendo columna Q: {e}")
+
+    # ─────────────────────────────────────────────────────────
+    # Histórico
+    # ─────────────────────────────────────────────────────────
 
     def copiar_a_historico(self, filas: List[List[Any]], header: List[str]):
         """Copia filas a hoja 'Historico' (crea si no existe)."""

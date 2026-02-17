@@ -4,7 +4,7 @@ Deja el resultado visible en "Informacion imagenes" columna Q.
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 from src.utils.sheets_io import SheetsIO
 from src.utils.config import HEADERS_MES
@@ -23,11 +23,12 @@ logger = logging.getLogger(__name__)
 
 COLS_OUT = len(HEADERS_MES)
 
-# Informacion imagenes: Q es columna 17 (1-based), en get_all_values está en índice 16 (0-based)
+# "Informacion imagenes": Q es columna 17 (1-based), en get_all_values está en índice 16 (0-based)
 INFO_Q_IDX = 16
 
 
 def _mes_anterior(anio: int, mes_idx: int) -> Dict[str, int]:
+    """mes_idx es 0-based (0=Enero)."""
     if mes_idx <= 0:
         return {"anio": anio - 1, "mesIdx": 11}
     return {"anio": anio, "mesIdx": mes_idx - 1}
@@ -58,17 +59,22 @@ def _es_honorario_existente(row_vals: List[Any]) -> bool:
 
 
 def _build_dedupe_key(dni: str, dia: int, mes_idx: int, monto_raw: Any) -> str:
+    """
+    Key de dedupe: DNI + día + mesIdx (0-based) + montoSinDec (estable).
+    """
     monto_sin = limpiar_monto_sin_decimales(monto_raw)
     return f"{dni}|{dia}|{mes_idx}|{monto_sin}"
 
 
 def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
-
     info_data = sheets.leer_info_imagenes()
     if not info_data:
         return {"procesados": 0, "duplicados": 0, "sin_base": 0}
 
+    # idx (0-based sobre info_data) -> texto en columna Q
     marcas_q: Dict[int, str] = {}
+
+    # Agrupar por mes: "anio-mesIdx" -> items
     grupos: Dict[str, List[dict]] = {}
 
     # =========================================================
@@ -76,11 +82,12 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
     # =========================================================
     for i, row in enumerate(info_data):
 
-        # (Opcional pero recomendado) si ya fue procesado, no lo reprocesamos
-        q_actual = str(row[INFO_Q_IDX]).strip() if len(row) > INFO_Q_IDX and row[INFO_Q_IDX] is not None else ""
-        if q_actual.startswith("✅ HON OK") or q_actual.startswith("⚠️ HON DUP"):
-            # Ya resuelto en ejecuciones anteriores
-            continue
+        # ⚠️ OJO: si limpias Q siempre, este "skip" deja de servir.
+        # Si querés un "skip persistente", usá otra columna/flag permanente.
+        #
+        # q_actual = str(row[INFO_Q_IDX]).strip() if len(row) > INFO_Q_IDX and row[INFO_Q_IDX] is not None else ""
+        # if q_actual.startswith("✅ HON OK") or q_actual.startswith("⚠️ HON DUP"):
+        #     continue
 
         archivo = str(row[0] if len(row) > 0 else "").strip()
         dni = extraer_dni_honorario(archivo)
@@ -108,9 +115,13 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
             "anio": fecha["anio"],
         })
 
+    # Si no hay honorarios válidos, igual limpiamos Q y escribimos errores detectados
     if not grupos:
-        if marcas_q:
-            sheets.escribir_estado_info_imagenes_col_q(marcas_q)
+        logs_q = [""] * len(info_data)
+        for idx, txt in marcas_q.items():
+            if 0 <= idx < len(logs_q):
+                logs_q[idx] = txt
+        sheets.limpiar_y_escribir_info_col_q(logs_q)
         return {"procesados": 0, "duplicados": 0, "sin_base": 0}
 
     procesados = duplicados = sin_base = 0
@@ -119,12 +130,12 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
     # 2) PROCESAMIENTO POR MES
     # =========================================================
     for key, items in grupos.items():
-
         anio, mes_idx = [int(x) for x in key.split("-")]
         hoja_nombre = nombre_hoja_mes(mes_idx, anio)
 
         data_mes = sheets.leer_hoja_mes(hoja_nombre) or []
 
+        # Índices rápidos
         last_row_by_dni: Dict[str, int] = {}
         honorario_keys = set()
 
@@ -171,10 +182,9 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
         prev_by_dni = None
         prev_nombre = None
 
-        appends = []
+        appends: List[List[Any]] = []
 
         for it in items:
-
             dup_key = _build_dedupe_key(
                 dni=it["dni"],
                 dia=it["dia"],
@@ -182,7 +192,7 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
                 monto_raw=it["monto_raw"],
             )
 
-            # 🛑 DEDUPE REAL
+            # 🛑 DEDUPE REAL: si ya existe, NO escribir
             if dup_key in honorario_keys:
                 duplicados += 1
                 marcas_q[it["idx"]] = f"⚠️ HON DUP: Ya existe (no se carga) en {hoja_nombre}"
@@ -200,10 +210,10 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
                     prev_nombre = nombre_hoja_mes(prev["mesIdx"], prev["anio"])
                     prev_data = sheets.leer_hoja_mes(prev_nombre) or []
                     prev_by_dni = {}
-                    for r in range(len(prev_data) - 1, 0, -1):
-                        d = str(prev_data[r][0] if len(prev_data[r]) > 0 else "").strip()
+                    for rr in range(len(prev_data) - 1, 0, -1):
+                        d = str(prev_data[rr][0] if len(prev_data[rr]) > 0 else "").strip()
                         if d and d not in prev_by_dni:
-                            prev_by_dni[d] = r
+                            prev_by_dni[d] = rr
 
                 if prev_by_dni and it["dni"] in prev_by_dni:
                     base_row = list(prev_data[prev_by_dni[it["dni"]]])
@@ -232,7 +242,7 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
 
             appends.append(base_row)
 
-            # importantísimo: sumar al set ANTES de seguir, para no duplicar en el mismo run
+            # ✅ sumar al set para evitar duplicados dentro del mismo run
             honorario_keys.add(dup_key)
             procesados += 1
 
@@ -241,14 +251,20 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
             else:
                 marcas_q[it["idx"]] = f"✅ HON OK → {hoja_nombre}"
 
+        # Escritura batch única
         if appends:
             sheets.escribir_filas_mes(hoja_nombre, appends)
 
     # =========================================================
-    # 3) ESCRIBIR ESTADOS EN Q
+    # 3) LIMPIAR + ESCRIBIR ESTADOS EN Q (vector completo)
     # =========================================================
-    if marcas_q:
-        sheets.escribir_estado_info_imagenes_col_q(marcas_q)
+    logs_q = [""] * len(info_data)
+    for idx, txt in marcas_q.items():
+        if 0 <= idx < len(logs_q):
+            logs_q[idx] = txt
+
+    # ✅ Limpia y luego escribe Q completa
+    sheets.limpiar_y_escribir_info_col_q(logs_q)
 
     logger.info(f"Honorarios finalizado: OK={procesados}, DUP={duplicados}, SIN_BASE={sin_base}")
     return {"procesados": procesados, "duplicados": duplicados, "sin_base": sin_base}
