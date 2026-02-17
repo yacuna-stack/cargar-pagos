@@ -191,57 +191,56 @@ class SheetsIO:
 
     def limpiar_y_escribir_info_col_q(self, logs_q: List[str]):
         """
-        Limpia COMPLETA la columna Q (desde fila 2 hasta la última fila con datos),
-        y luego escribe logs_q (vector completo) en esa misma columna.
-
-        - logs_q debe tener longitud = cantidad de filas leídas por leer_info_imagenes()
-          (o sea, lastRow-1).
-        - Esto reproduce lo que hacía Apps Script:
-          setValues(logsP.map(x => [x])) pero asegurando limpiar primero.
+        Limpia y escribe la columna Q en 'Informacion imagenes'.
+        Usa lógica robusta compatible con gspread estándar.
         """
         if logs_q is None:
             return
 
         try:
             ws = self.sh.worksheet("Informacion imagenes")
-            last_row = ws.row_count
-            used_last = ws.get_last_row()  # gspread Worksheet tiene get_last_row()
 
-            # Si get_last_row no existe (depende versión), fallback:
-            if not used_last:
-                used_last = ws.get_all_values()
-                used_last = len(used_last) if used_last else 1
-
-            # asegurar columna Q
+            # Asegurar columna Q (17)
             if ws.col_count < 17:
                 ws.add_cols(17 - ws.col_count)
 
-            # rango real a limpiar/escribir (fila 2..)
-            n = len(logs_q)
-            if n == 0:
-                # igual limpiamos (por si había basura)
-                if used_last >= 2:
-                    ws.update(f"Q2:Q{used_last}", [[""] for _ in range(used_last - 1)], value_input_option="USER_ENTERED")
+            # Determinar cuántas filas escribir
+            n_logs = len(logs_q)
+            
+            # Obtener altura total de la hoja para saber hasta dónde limpiar
+            total_rows = ws.row_count
+            
+            # Construir datos para escribir (fila 2 en adelante)
+            # Todo lo que exceda n_logs se llenará con ""
+            
+            # Estrategia: Escribir TODO el rango de la columna Q desde la fila 2 hasta el final de la hoja.
+            # Si la hoja es muy larga (ej 1000 filas) y solo tenemos 5 logs, escribimos 5 valores y 995 vacíos.
+            # Esto es una sola operación batch y garantiza limpieza.
+            
+            # Generar lista completa de valores para la columna Q
+            # logs_q ya trae los valores para las filas con datos (según lectura previa)
+            # Rellenamos con "" hasta el final de la hoja para limpiar lo viejo
+            
+            values = [[x] for x in logs_q]
+            
+            # Si hay más filas en la hoja que logs, agregar vacíos
+            rows_to_clear = total_rows - 1 - n_logs # -1 por header
+            if rows_to_clear > 0:
+                 values.extend([[""] for _ in range(rows_to_clear)])
+
+            # Asegurar que no excedemos el tamaño de la hoja (por si row_count cambió, improbable)
+            values = values[:total_rows - 1] 
+
+            if not values:
                 return
 
-            # 1) LIMPIAR (hasta el max entre used_last y n+1 para no dejar basura)
-            end_row = max(used_last, n + 1)
-            if end_row >= 2:
-                ws.update(
-                    f"Q2:Q{end_row}",
-                    [[""] for _ in range(end_row - 1)],
-                    value_input_option="USER_ENTERED",
-                )
-
-            # 2) ESCRIBIR logs nuevos (solo hasta n)
-            ws.update(
-                f"Q2:Q{n + 1}",
-                [[x] for x in logs_q],
-                value_input_option="USER_ENTERED",
-            )
+            # Escribir en una sola operación
+            range_name = f"Q2:Q{len(values) + 1}"
+            ws.update(range_name, values, value_input_option="USER_ENTERED")
+            logger.info(f"Columna Q actualizada: {n_logs} logs escritos, {len(values)} filas tocadas.")
 
         except Exception as e:
-            logger.warning(f"Error limpiando/escribiendo columna Q: {e}")
+            logger.warning(f"Error escribiendo columna Q: {e}")
 
     # ─────────────────────────────────────────────────────────
     # Histórico
