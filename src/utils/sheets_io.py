@@ -1,10 +1,10 @@
 """
 sheets_io.py — Lectura y escritura centralizada de Google Sheets
-Usa la API de Sheets v4 para operaciones batch eficientes.
+Usa gspread para operaciones batch eficientes.
 """
 
 import logging
-from typing import List, Any, Optional, Dict
+from typing import List, Any, Dict
 
 import gspread
 import google.auth
@@ -94,49 +94,54 @@ class SheetsIO:
         ws.append_rows(filas, value_input_option="USER_ENTERED")
         logger.info(f"Escritas {len(filas)} filas en '{nombre}'")
 
-    def actualizar_columna_mes(self, nombre: str, col_idx: int, valores: List):
+    def actualizar_columna_mes(self, nombre: str, col_idx: int, valores: List[Any]):
         """Actualiza una columna completa (desde fila 2) en una hoja mensual."""
         if not valores:
             return
         ws = self.obtener_o_crear_hoja_mes(nombre)
-        # col_idx es 0-based, gspread usa 1-based
+
         cell_list = [[v] for v in valores]
-        col_letter = chr(65 + col_idx) if col_idx < 26 else f"A{chr(65 + col_idx - 26)}"
+
+        # col_idx es 0-based; convertir a letra A..Z, AA.. (simple y correcto)
+        col_num = col_idx + 1  # 1-based
+        col_letter = gspread.utils.rowcol_to_a1(1, col_num).rstrip("1")  # "A1" -> "A"
+
         rng = f"{col_letter}2:{col_letter}{len(valores) + 1}"
         ws.update(rng, cell_list, value_input_option="USER_ENTERED")
 
-    def actualizar_dos_columnas_mes(self, nombre: str, col_e_vals: List, col_g_vals: List):
+    def actualizar_dos_columnas_mes(self, nombre: str, col_e_vals: List[Any], col_g_vals: List[Any]):
         """Actualiza columnas E (concepto) y G (cuota) de la hoja mensual."""
         ws = self.obtener_o_crear_hoja_mes(nombre)
         total = len(col_e_vals)
         if total == 0:
             return
-        # E = col 5 (1-based)
+
         ws.update(f"E2:E{total + 1}", [[v] for v in col_e_vals], value_input_option="USER_ENTERED")
-        # G = col 7 (1-based)
         ws.update(f"G2:G{total + 1}", [[v] for v in col_g_vals], value_input_option="USER_ENTERED")
 
     # ─── Escritura general ───
 
     def escribir_estado_info(self, estados: List[str], col: int = 16):
-        """Escribe estados en columna P (16) de 'Informacion imagenes'."""
+        """
+        Escribe estados en una columna de 'Informacion imagenes'.
+        Por defecto col=16 => P.
+        """
         if not estados:
             return
         try:
             ws = self.sh.worksheet("Informacion imagenes")
             cell_list = [[s] for s in estados]
-            col_letter = chr(64 + col)
+            col_letter = chr(64 + col)  # 1->A, 16->P
             ws.update(f"{col_letter}2:{col_letter}{len(estados) + 1}", cell_list, value_input_option="USER_ENTERED")
         except Exception as e:
             logger.warning(f"Error escribiendo estados: {e}")
 
-
-        def escribir_estado_info_imagenes_col_q(self, marcas_q: Dict[int, str]):
+    def escribir_estado_info_imagenes_col_q(self, marcas_q: Dict[int, str]):
         """
         Escribe estados SOLO en las filas indicadas en 'Informacion imagenes', columna Q.
 
-        - marcas_q: dict {idx_0based: "texto"}, donde idx_0based corresponde a info_data
-          (es decir, fila real = idx + 2 porque la fila 1 es header).
+        - marcas_q: dict {idx_0based: "texto"}, donde idx_0based corresponde a leer_info_imagenes()
+          (fila real = idx + 2 porque fila 1 es header).
         - No pisa otras filas no incluidas.
         """
         if not marcas_q:
@@ -145,25 +150,16 @@ class SheetsIO:
         try:
             ws = self.sh.worksheet("Informacion imagenes")
 
-            # Columna Q = 17 (1-based)  -> letra Q
-            col_letter = "Q"
-
-            # Construir batch de rangos individuales (pisa solo filas marcadas)
             updates = []
             for idx, txt in marcas_q.items():
-                # idx es 0-based de info_data => fila real en sheet
-                row_num = int(idx) + 2
-                updates.append({
-                    "range": f"{col_letter}{row_num}",
-                    "values": [[str(txt)]],
-                })
+                row_num = int(idx) + 2  # idx 0 -> fila 2
+                updates.append({"range": f"Q{row_num}", "values": [[str(txt)]]})
 
-            # gspread soporta batch_update con lista de dicts {range, values}
+            # batch_update pisa solo esas celdas
             ws.batch_update(updates, value_input_option="USER_ENTERED")
 
         except Exception as e:
             logger.warning(f"Error escribiendo estados honorarios en Q: {e}")
-
 
     # ─── Histórico ───
 
