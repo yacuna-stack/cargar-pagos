@@ -130,6 +130,41 @@ class SheetsIO:
         except Exception as e:
             logger.warning(f"Error escribiendo estados: {e}")
 
+
+        def escribir_estado_info_imagenes_col_q(self, marcas_q: Dict[int, str]):
+        """
+        Escribe estados SOLO en las filas indicadas en 'Informacion imagenes', columna Q.
+
+        - marcas_q: dict {idx_0based: "texto"}, donde idx_0based corresponde a info_data
+          (es decir, fila real = idx + 2 porque la fila 1 es header).
+        - No pisa otras filas no incluidas.
+        """
+        if not marcas_q:
+            return
+
+        try:
+            ws = self.sh.worksheet("Informacion imagenes")
+
+            # Columna Q = 17 (1-based)  -> letra Q
+            col_letter = "Q"
+
+            # Construir batch de rangos individuales (pisa solo filas marcadas)
+            updates = []
+            for idx, txt in marcas_q.items():
+                # idx es 0-based de info_data => fila real en sheet
+                row_num = int(idx) + 2
+                updates.append({
+                    "range": f"{col_letter}{row_num}",
+                    "values": [[str(txt)]],
+                })
+
+            # gspread soporta batch_update con lista de dicts {range, values}
+            ws.batch_update(updates, value_input_option="USER_ENTERED")
+
+        except Exception as e:
+            logger.warning(f"Error escribiendo estados honorarios en Q: {e}")
+
+
     # ─── Histórico ───
 
     def copiar_a_historico(self, filas: List[List[Any]], header: List[str]):
