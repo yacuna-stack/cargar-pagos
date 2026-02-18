@@ -58,6 +58,12 @@ CANAL_TO_CODE = {
     "efectivosi": 32,
     "ctaefectivosi": 33,
     "mins": 66,
+    "Cta Creditia": 24, 
+    "Cta. Mins": 34,
+    "cta Efetivo Si": 33,
+    "Cta. Creditia": 24,
+    "Cta. RDA": 31,
+    "Banco ": 2,
 }
 
 # ─── Entidades conocidas ───

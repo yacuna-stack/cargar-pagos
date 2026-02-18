@@ -4,6 +4,8 @@ Lee 'Informacion imagenes' + 'Pro', mapea por DNI, escribe en hojas mensuales.
 """
 
 import logging
+import re
+import unicodedata
 from typing import Dict, Any, List
 
 from src.utils.sheets_io import SheetsIO
@@ -27,6 +29,135 @@ from src.utils.text import (
 from src.utils.calendar_ar import calcular_dia_habil_del_mes
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Robustez Columna N (Cta. Destino)
+# - Prioridad: emisor → Banco / Pago Facil / Rapipago (como ya funcionaba)
+# - Si NO cae en esas 3: mapear destino_raw por patrones → namePago
+# - Si no hay match: fallback destino_raw
+# =============================================================================
+
+DESTINATARIOS = [
+    {
+        "namePago": "Cta. Comafi",
+        "patrones": [
+            "2990000000001054390008", "10543/9", "30-60473101-8", "30604731018"
+        ]
+    },
+    {
+        "namePago": "Banco",
+        "patrones": [
+            "0170155120000001255595", "155-012555/9", "30-71631686-2", "30716316862"
+        ]
+    },
+    {
+        "namePago": "Cta. Creditia",
+        "patrones": [
+            "099-720777/6", "0170099220000072077766",
+            "(000) 033600/2", "0720000720000003360022", "30-71213737-8", "30-71789342-1"
+        ]
+    },
+    {
+        "namePago": "Cta. Mins",
+        "patrones": [
+            "2990113311300150410002", "30-71683093-0", "30716830930"
+        ]
+    },
+    {
+        "namePago": "Cta. RDA",
+        "patrones": [
+            "0004194-6 024-7", "0070024520000004194671", "33-71573296-9 "
+        ]
+    },
+    {
+        "namePago": "Cta. Exi",
+        "patrones": [
+            "18156-5 339-3", "0070339820000018156535", "30-71589360-2",
+            "30-71851349-5", "2850793630094217184081"
+        ]
+    },
+    {
+        "namePago": "cta Efetivo Si",
+        "patrones": [
+            "30538006404"
+        ]
+    }
+]
+
+_SEP_RX = re.compile(r"[\s\-\./()]+")
+_DIGITS_RX = re.compile(r"\D+")
+
+
+def _norm_txt(s: str) -> str:
+    """Lower + sin acentos + trim."""
+    s = (s or "").strip().lower()
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    return s
+
+
+def _compact_txt(s: str) -> str:
+    """Texto compacto sin separadores típicos (espacios, guiones, puntos, barras, paréntesis)."""
+    return _SEP_RX.sub("", _norm_txt(s))
+
+
+def _only_digits(s: str) -> str:
+    """Solo dígitos (útil para CUIT/CBU)."""
+    return _DIGITS_RX.sub("", s or "")
+
+
+# Precompilado de patrones (para velocidad + robustez)
+DESTINATARIOS_COMPILED = []
+for d in DESTINATARIOS:
+    pats_compact = [_compact_txt(p) for p in d.get("patrones", []) if p]
+    pats_digits = [_only_digits(p) for p in d.get("patrones", []) if _only_digits(p)]
+    DESTINATARIOS_COMPILED.append({
+        "namePago": d["namePago"],
+        "p_compact": [p for p in pats_compact if p],
+        "p_digits": [p for p in pats_digits if p],
+    })
+
+
+def resolver_cta_destino(emisor: str, destino_raw: str) -> str:
+    """
+    Resuelve el texto final para la columna N (Cta. Destino).
+
+    Reglas:
+    1) Mantener prioridad existente por emisor:
+       - Comafi/Banco → "Banco"
+       - Pago Facil → "Pago Facil"
+       - Rapipago → "Rapipago"
+
+    2) Si NO es ninguno de los 3:
+       - Buscar patrones en destino_raw y devolver el namePago correspondiente.
+
+    3) Fallback:
+       - devolver destino_raw tal cual (strip)
+    """
+    raw = (destino_raw or "").strip()
+
+    # (1) Prioridad existente por emisor (NO cambiar comportamiento actual)
+    if es_banco_comafi(emisor):
+        return "Banco"
+    if contiene_pago_facil(emisor):
+        return "Pago Facil"
+    if contiene_rapipago(emisor):
+        return "Rapipago"
+
+    # (2) Match por patrones contra destino_raw
+    raw_compact = _compact_txt(raw)
+    raw_digits = _only_digits(raw)
+
+    for d in DESTINATARIOS_COMPILED:
+        for p in d["p_compact"]:
+            if p and p in raw_compact:
+                return d["namePago"]
+        for p in d["p_digits"]:
+            if p and p in raw_digits:
+                return d["namePago"]
+
+    # (3) Fallback
+    return raw
 
 
 def _tipo_pago(valor: str) -> str:
@@ -177,15 +308,11 @@ def ejecutar_carga_pagos(sheets: SheetsIO) -> Dict[str, Any]:
             if not destino_raw:
                 destino_raw = str(row[10] if len(row) > 10 else "").strip()
 
-            # Detectar canal especial por emisor
-            if es_banco_comafi(emisor):
-                destino_raw = "Banco"
-            elif contiene_pago_facil(emisor):
-                destino_raw = "Pago Facil"
-            elif contiene_rapipago(emisor):
-                destino_raw = "Rapipago"
+            # ✅ ÚNICO CAMBIO FUNCIONAL: Columna N robusta
+            destino_n = resolver_cta_destino(emisor, destino_raw)
 
-            canal_code = CANAL_TO_CODE.get(normalize_canal(destino_raw), 0)
+            # Mantener W con el mismo mecanismo (pero usando el valor final de N)
+            canal_code = CANAL_TO_CODE.get(normalize_canal(destino_n), 0)
 
             # Tipo de pago
             tipo_texto = str(row_pro[5] if len(row_pro) > 5 else "").strip()
@@ -230,7 +357,7 @@ def ejecutar_carga_pagos(sheets: SheetsIO) -> Dict[str, Any]:
                 "",                                                # K: Producto Cta.
                 str(row_pro[4] if len(row_pro) > 4 else ""),     # L: Operador
                 detectar_entidades(cartera_raw),                   # M: Entidad
-                destino_raw,                                       # N: Cta. Destino
+                destino_n,                                         # N: Cta. Destino  
                 "",                                                # O: Observaciones
                 "",                                                # P: Transferido
                 dia_habil,                                         # Q: Nº Día
