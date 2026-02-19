@@ -64,7 +64,7 @@ CANAL_TO_CODE = {
     "cta Efetivo Si": 33,
     "Cta. Mins": 34,
     "Cta. Creditia": 24,
-    "Cta. Mins": 34,
+    "Cta. Mins ": 34,
     "Cta. RDA": 31,
     "Banco ": 2,
 }
