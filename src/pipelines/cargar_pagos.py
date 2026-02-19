@@ -77,9 +77,9 @@ DESTINATARIOS = [
         ]
     },
     {
-        "namePago": "cta Efetivo Si",
+        "namePago": "Cta. Efectivo Si",
         "patrones": [
-            "30538006404"
+            "30538006404", "27123601659", "0720000720000001663918", "27123601659"
         ]
     }
 ]
