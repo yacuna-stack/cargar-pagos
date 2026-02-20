@@ -46,6 +46,7 @@ MESES_ABREV = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "o
 CANAL_TO_CODE = {
     "banco": 2,
     "estudio": 1,
+    "Estudio": 1,
     "ctacomafi": 25,
     "ctacreditia": 24,
     "rapipago": 5,
@@ -66,6 +67,7 @@ CANAL_TO_CODE = {
     "Cta. Creditia": 24,
     "Cta. Mins ": 34,
     "Cta. RDA": 31,
+    "Cta. Comafi": 25,
     "Banco ": 2,
 }
 
