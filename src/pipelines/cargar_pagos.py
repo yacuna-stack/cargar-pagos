@@ -67,7 +67,7 @@ DESTINATARIOS = [
     {
         "namePago": "Cta. RDA",
         "patrones": [
-            "0004194-6 024-7", "0070024520000004194671", "33-71573296-9 "
+            "0004194-6 024-7", "0070024520000004194671", "33-71573296-9 ", "33715732969"
         ]
     },
     {
@@ -78,6 +78,12 @@ DESTINATARIOS = [
         ]
     },
     {
+        "namePago": "Of. Efectivo Si",
+        "patrones": [
+        "COMPAÑIA FINANCIERA ARGENTINA SA", "COMPAÑIA FINANCIERA ARGENTINA S.A", "COMPANIA FINANCIERA ARGENTINA S.A."
+        ]
+    },
+    { 
         "namePago": "Cta. Efectivo Si",
         "patrones": [
             "30538006404", "27123601659", "0720000720000001663918", "27123601659"
