@@ -79,17 +79,39 @@ def parsear_fecha_flexible(input_val) -> Optional[Dict]:
         if 1 <= dia <= 31 and 0 <= mes <= 11:
             return {"dia": dia, "mesIdx": mes, "anio": anio}
 
-    # DD-mmm (ej: "07-feb")
+    # DD/MMM/YYYY o DD-MMM-YYYY (con o sin basura después)
+    # Ej: "27/FEB/2026 - 08:10", "27-febrero-26"
+    m = re.match(r"^(\d{1,2})[/\-\s]([A-Za-z]+)[/\-\s](\d{2,4}).*$", s)
+    if m:
+        dia = int(m.group(1))
+        mes_str = m.group(2).lower()
+        anio = int(m.group(3))
+        if anio < 100:
+            anio += 2000
+        
+        # Buscar índice del mes
+        mes_idx = -1
+        for i, (abrev, es) in enumerate(zip(MESES_ABREV, MESES_ES)):
+            if mes_str.startswith(abrev) or mes_str == es.lower() or (mes_str == "sept" and abrev == "sep"):
+                mes_idx = i
+                break
+                
+        if 1 <= dia <= 31 and mes_idx != -1:
+            return {"dia": dia, "mesIdx": mes_idx, "anio": anio}
+
+    # DD-mmm (ej: "07-feb") sin año
     parsed = parsear_dia_mes_texto(s)
     if parsed:
         now = datetime.now()
         return {"dia": parsed["dia"], "mesIdx": parsed["mesIdx"], "anio": now.year}
 
-    # Fallback: Python date parser
+    # Fallback: dateutil parser (muy robusto para fechas complejas)
     try:
-        dt = datetime.fromisoformat(s)
+        from dateutil.parser import parse
+        # fuzzy=True permite ignorar basura como "- 08:10"
+        dt = parse(s, fuzzy=True, dayfirst=True)
         return {"dia": dt.day, "mesIdx": dt.month - 1, "anio": dt.year}
-    except (ValueError, TypeError):
+    except Exception:
         pass
 
     return None
