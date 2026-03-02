@@ -42,7 +42,7 @@ DESTINATARIOS = [
         "namePago": "Cta. Comafi",
         "patrones": [
             "2990000000001054390008", "10543/9", "30-60473101-8", "30604731018", "2900000000001054300000", "MOZO.TAPA.ROSTRO",
-            "29900000-00001054390008"
+            "29900000-00001054390008", "BFB SOLUCIONES S.A.", "Bfb Soluciones Sa"
         ]
     },
     {
