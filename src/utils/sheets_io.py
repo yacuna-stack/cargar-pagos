@@ -135,18 +135,50 @@ class SheetsIO:
     # Lectura
     # ─────────────────────────────────────────────────────────
 
-    def leer_hoja(self, nombre: str) -> List[List[Any]]:
-        """Lee todos los datos de una hoja (incluye header)."""
+    def _leer_por_rangos(self, ws: gspread.Worksheet,
+                         batch_size: int = BATCH_SIZE) -> List[List[Any]]:
+        """
+        Lee una hoja en bloques de filas para evitar OOM en hojas grandes.
+        Retorna todas las filas incluyendo header.
+        """
+        total_rows = ws.row_count
+        total_cols = ws.col_count
+        if total_rows == 0 or total_cols == 0:
+            return []
+
+        last_col = self._col_letter(total_cols)
+        all_data = []
+
+        for start in range(1, total_rows + 1, batch_size):
+            end = min(start + batch_size - 1, total_rows)
+            rng = f"A{start}:{last_col}{end}"
+            chunk = _retry_api_call(ws.get, rng)
+            if chunk:
+                all_data.extend(chunk)
+            else:
+                # Hoja termina antes de row_count (filas vacías al final)
+                break
+
+        return all_data
+
+    def leer_hoja(self, nombre: str, batched: bool = False) -> List[List[Any]]:
+        """
+        Lee todos los datos de una hoja (incluye header).
+        Si batched=True, lee en bloques (para hojas grandes >5K filas).
+        """
         try:
             ws = self.sh.worksheet(nombre)
+            if batched:
+                return self._leer_por_rangos(ws)
             return _retry_api_call(ws.get_all_values)
         except WorksheetNotFound:
             logger.warning(f"Hoja '{nombre}' no encontrada")
             return []
 
-    def leer_hoja_sin_header(self, nombre: str) -> List[List[Any]]:
+    def leer_hoja_sin_header(self, nombre: str,
+                             batched: bool = False) -> List[List[Any]]:
         """Lee datos sin la fila de header."""
-        data = self.leer_hoja(nombre)
+        data = self.leer_hoja(nombre, batched=batched)
         return data[1:] if len(data) > 1 else []
 
     def leer_info_imagenes(self) -> List[List[Any]]:
@@ -154,8 +186,8 @@ class SheetsIO:
         return self.leer_hoja_sin_header("Informacion imagenes")
 
     def leer_pro(self) -> Tuple[List[Any], List[List[Any]]]:
-        """Lee hoja 'Pro'. Retorna (header, data_rows)."""
-        data = self.leer_hoja("Pro")
+        """Lee hoja 'Pro'. Retorna (header, data_rows). Usa lectura batched."""
+        data = self.leer_hoja("Pro", batched=True)
         if not data:
             return [], []
         return data[0], data[1:]
