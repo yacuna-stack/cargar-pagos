@@ -2,7 +2,9 @@
 sheets_io.py — Lectura y escritura centralizada de Google Sheets
 Usa gspread para operaciones batch eficientes.
 
-Optimizaciones vs versión anterior:
+Optimizaciones:
+- Lectura en chunks para hojas grandes (Pro) evitando OOM/timeout
+- Cache de Pro para no leerla múltiples veces
 - Escritura en chunks para evitar OOM y timeouts de la API
 - Retry automático con backoff exponencial en errores transitorios
 - Logging mejorado con tiempos de ejecución
@@ -27,7 +29,7 @@ SCOPES = [
 ]
 
 # ─── Configuración de batching y retry ───────────────────
-BATCH_SIZE = 500          # filas por escritura
+BATCH_SIZE = 500          # filas por lectura/escritura
 MAX_RETRIES = 3           # reintentos en errores transitorios
 RETRY_BASE_DELAY = 2      # segundos base entre reintentos
 RETRY_CODES = {429, 500, 502, 503}  # HTTP codes que merecen retry
@@ -63,7 +65,6 @@ def _retry_api_call(func, *args, **kwargs):
             )
             time.sleep(delay)
         except Exception as e:
-            # ConnectionError, timeout, etc.
             last_err = e
             if attempt == MAX_RETRIES:
                 raise
@@ -104,6 +105,60 @@ def _write_column_batched(ws: gspread.Worksheet, col_letter: str,
             )
 
 
+def _read_batched(ws: gspread.Worksheet, batch_size: int = BATCH_SIZE) -> List[List[Any]]:
+    """
+    Lee una hoja en bloques de filas para evitar OOM/timeout.
+    Usa get_all_values() primero; si falla, cae a lectura por rangos.
+    """
+    # Intento 1: get_all_values (más eficiente si la hoja no es enorme)
+    try:
+        return _retry_api_call(ws.get_all_values)
+    except Exception as e:
+        logger.warning(
+            f"get_all_values falló para '{ws.title}' ({e}), "
+            f"cayendo a lectura por rangos..."
+        )
+
+    # Intento 2: lectura por rangos
+    # Primero obtener la última fila con datos (no row_count que puede ser 1M)
+    try:
+        # Buscar última fila con datos en columna A
+        col_a = _retry_api_call(ws.col_values, 1)
+        total_rows = len(col_a)
+    except Exception:
+        # Fallback: usar row_count pero con un tope razonable
+        total_rows = min(ws.row_count, 50000)
+
+    if total_rows == 0:
+        return []
+
+    total_cols = ws.col_count
+    if total_cols == 0:
+        return []
+
+    col_letter_end = gspread.utils.rowcol_to_a1(1, total_cols).rstrip("1")
+    all_data = []
+
+    for start in range(1, total_rows + 1, batch_size):
+        end = min(start + batch_size - 1, total_rows)
+        rng = f"A{start}:{col_letter_end}{end}"
+        try:
+            chunk = _retry_api_call(ws.get, rng)
+            if chunk:
+                all_data.extend(chunk)
+            else:
+                break
+        except Exception as e:
+            logger.error(f"Error leyendo rango {rng} de '{ws.title}': {e}")
+            break
+
+        if len(all_data) % 2000 == 0:
+            logger.debug(f"  Lectura '{ws.title}': {len(all_data)} filas leídas...")
+
+    logger.info(f"Lectura por rangos '{ws.title}': {len(all_data)} filas en total")
+    return all_data
+
+
 class SheetsIO:
     """Maneja toda la interacción con Google Sheets."""
 
@@ -112,6 +167,7 @@ class SheetsIO:
         self.gc = gspread.authorize(_creds)
         self.sh = self.gc.open_by_key(spreadsheet_id)
         self._hoja_cache: Dict[str, gspread.Worksheet] = {}
+        self._pro_cache: Optional[Tuple[List[Any], List[List[Any]]]] = None
 
     # ─────────────────────────────────────────────────────────
     # Helpers internos
@@ -135,50 +191,18 @@ class SheetsIO:
     # Lectura
     # ─────────────────────────────────────────────────────────
 
-    def _leer_por_rangos(self, ws: gspread.Worksheet,
-                         batch_size: int = BATCH_SIZE) -> List[List[Any]]:
-        """
-        Lee una hoja en bloques de filas para evitar OOM en hojas grandes.
-        Retorna todas las filas incluyendo header.
-        """
-        total_rows = ws.row_count
-        total_cols = ws.col_count
-        if total_rows == 0 or total_cols == 0:
-            return []
-
-        last_col = self._col_letter(total_cols)
-        all_data = []
-
-        for start in range(1, total_rows + 1, batch_size):
-            end = min(start + batch_size - 1, total_rows)
-            rng = f"A{start}:{last_col}{end}"
-            chunk = _retry_api_call(ws.get, rng)
-            if chunk:
-                all_data.extend(chunk)
-            else:
-                # Hoja termina antes de row_count (filas vacías al final)
-                break
-
-        return all_data
-
-    def leer_hoja(self, nombre: str, batched: bool = False) -> List[List[Any]]:
-        """
-        Lee todos los datos de una hoja (incluye header).
-        Si batched=True, lee en bloques (para hojas grandes >5K filas).
-        """
+    def leer_hoja(self, nombre: str) -> List[List[Any]]:
+        """Lee todos los datos de una hoja (incluye header)."""
         try:
             ws = self.sh.worksheet(nombre)
-            if batched:
-                return self._leer_por_rangos(ws)
             return _retry_api_call(ws.get_all_values)
         except WorksheetNotFound:
             logger.warning(f"Hoja '{nombre}' no encontrada")
             return []
 
-    def leer_hoja_sin_header(self, nombre: str,
-                             batched: bool = False) -> List[List[Any]]:
+    def leer_hoja_sin_header(self, nombre: str) -> List[List[Any]]:
         """Lee datos sin la fila de header."""
-        data = self.leer_hoja(nombre, batched=batched)
+        data = self.leer_hoja(nombre)
         return data[1:] if len(data) > 1 else []
 
     def leer_info_imagenes(self) -> List[List[Any]]:
@@ -186,11 +210,36 @@ class SheetsIO:
         return self.leer_hoja_sin_header("Informacion imagenes")
 
     def leer_pro(self) -> Tuple[List[Any], List[List[Any]]]:
-        """Lee hoja 'Pro'. Retorna (header, data_rows). Usa lectura batched."""
-        data = self.leer_hoja("Pro", batched=True)
+        """
+        Lee hoja 'Pro'. Retorna (header, data_rows).
+        Usa cache para no leer múltiples veces y lectura robusta
+        con fallback a rangos si get_all_values falla.
+        """
+        if self._pro_cache is not None:
+            logger.debug("leer_pro(): usando cache")
+            return self._pro_cache
+
+        t0 = time.time()
+        try:
+            ws = self.sh.worksheet("Pro")
+            data = _read_batched(ws)
+        except WorksheetNotFound:
+            logger.warning("Hoja 'Pro' no encontrada")
+            return [], []
+
         if not data:
             return [], []
-        return data[0], data[1:]
+
+        result = (data[0], data[1:])
+        self._pro_cache = result
+        logger.info(
+            f"leer_pro(): {len(data)-1} filas leídas en {time.time()-t0:.1f}s"
+        )
+        return result
+
+    def invalidar_cache_pro(self):
+        """Fuerza releer Pro en la próxima llamada a leer_pro()."""
+        self._pro_cache = None
 
     # ─────────────────────────────────────────────────────────
     # Hojas mensuales
@@ -226,7 +275,6 @@ class SheetsIO:
             return
         ws = self.obtener_o_crear_hoja_mes(nombre)
 
-        # Escribir en chunks para hojas grandes
         for offset in range(0, len(filas), BATCH_SIZE):
             chunk = filas[offset: offset + BATCH_SIZE]
             _retry_api_call(
@@ -301,7 +349,6 @@ class SheetsIO:
             ws = self.sh.worksheet("Informacion imagenes")
             self._ensure_col_count(ws, 17)
 
-            # Agrupar en batches para batch_update
             updates = [
                 {"range": f"Q{int(idx) + 2}", "values": [[str(txt)]]}
                 for idx, txt in marcas_q.items()
@@ -328,9 +375,8 @@ class SheetsIO:
             self._ensure_col_count(ws, 17)
 
             total_rows = ws.row_count
-            data_rows = total_rows - 1  # sin header
+            data_rows = total_rows - 1
 
-            # Construir valores: logs reales + vacíos para limpiar el resto
             values = list(logs_q)
             if len(values) < data_rows:
                 values.extend([""] * (data_rows - len(values)))
