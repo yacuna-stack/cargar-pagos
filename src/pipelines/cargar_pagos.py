@@ -42,7 +42,7 @@ DESTINATARIOS = [
         "namePago": "Cta. Comafi",
         "patrones": [
             "2990000000001054390008", "10543/9", "30-60473101-8", "30604731018", "2900000000001054300000", "MOZO.TAPA.ROSTRO",
-            "29900000-00001054390008", "BFB SOLUCIONES S.A.", "Bfb Soluciones Sa"
+            "29900000-00001054390008", "BFB SOLUCIONES S.A.", "Bfb Soluciones Sa", "Bco Comafi Rec M.T. $", "Banco Comafi S.a."
         ]
     },
     {
@@ -55,7 +55,7 @@ DESTINATARIOS = [
         "namePago": "Cta. Creditia",
         "patrones": [
             "099-720777/6", "0170099220000072077766",
-            "(000) 033600/2", "0720000720000003360022", "30-71213737-8", "30-71789342-1", "10600114736728", "Fideicomiso Privad"
+            "(000) 033600/2", "0720000720000003360022", "30-71213737-8", "30-71789342-1", "10600114736728", "Fideicomiso Privad", "Creditia Fideicomiso Financier"
         ]
     },
     {
@@ -80,13 +80,13 @@ DESTINATARIOS = [
     {
         "namePago": "Of. Efectivo Si",
         "patrones": [
-        "COMPAÑIA FINANCIERA ARGENTINA SA", "COMPAÑIA FINANCIERA ARGENTINA S.A", "COMPANIA FINANCIERA ARGENTINA S.A."
+        "COMPAÑIA FINANCIERA ARGENTINA SA", "COMPAÑIA FINANCIERA ARGENTINA S.A", "COMPANIA FINANCIERA ARGENTINA S.A.", "COMPA#IA FINANCIERA ARG SA"
         ]
     },
     { 
         "namePago": "Cta. Efectivo Si",
         "patrones": [
-            "30538006404", "27123601659", "0720000720000001663918", "27123601659"
+            "30538006404", "27123601659", "0720000720000001663918"
         ]
     }
 ]
