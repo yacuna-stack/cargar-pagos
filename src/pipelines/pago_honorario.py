@@ -13,11 +13,15 @@ from src.utils.parsers import (
     parsear_fecha_flexible,
     nombre_hoja_mes,
     parsear_dia_mes_texto,
+    formato_fecha_corta,
 )
 from src.utils.text import (
     extraer_solo_numeros_crudos,
     limpiar_monto_sin_decimales,
+    es_banco_comafi,
+    detectar_entidades,
 )
+from src.utils.calendar_ar import calcular_dia_habil_del_mes
 
 logger = logging.getLogger(__name__)
 
@@ -176,11 +180,14 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
             honorario_keys.add(dedupe_key)
 
         # =========================================
-        # Fallback mes anterior (lazy load)
+        # Fallback mes anterior y PRO (lazy load)
         # =========================================
         prev_data = None
         prev_by_dni = None
         prev_nombre = None
+        
+        data_pro = None
+        pro_by_dni = None
 
         appends: List[List[Any]] = []
 
@@ -219,9 +226,55 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
                     base_row = list(prev_data[prev_by_dni[it["dni"]]])
                     base_from = prev_nombre or "mes anterior"
                 else:
-                    sin_base += 1
-                    marcas_q[it["idx"]] = "❌ HON ERROR: Sin registro base (mes actual ni anterior)"
-                    continue
+                    if pro_by_dni is None:
+                        header_pro, data_pro = sheets.leer_pro()
+                        pro_by_dni = {}
+                        if data_pro:
+                            for idx_pro, r_pro in enumerate(data_pro):
+                                d = str(r_pro[2] if len(r_pro) > 2 else "").strip()
+                                if d and d not in pro_by_dni:
+                                    pro_by_dni[d] = r_pro
+                    
+                    if pro_by_dni and it["dni"] in pro_by_dni:
+                        row_pro = pro_by_dni[it["dni"]]
+                        cartera_raw = str(row_pro[9] if len(row_pro) > 9 else "").strip()
+                        cartera = "Comafi" if es_banco_comafi(cartera_raw) else cartera_raw
+                        
+                        fecha_fmt = formato_fecha_corta(it["dia"], it["mesIdx"])
+                        dia_habil = calcular_dia_habil_del_mes(it["dia"], it["mesIdx"], anio) or ""
+                        
+                        base_row = [
+                            it["dni"],                                     # A: DNI
+                            str(row_pro[3] if len(row_pro) > 3 else ""),   # B: Nombre
+                            fecha_fmt,                                     # C: Fecha
+                            "",                                            # D: Importe (se pisa)
+                            "",                                            # E: Concepto
+                            "",                                            # F: Tipo de Pago
+                            "",                                            # G: Nro de Cuota
+                            str(row_pro[7] if len(row_pro) > 7 else ""),   # H: Total Cuotas
+                            cartera,                                       # I: Cartera
+                            "",                                            # J: Cartera Cta.
+                            "",                                            # K: Producto Cta.
+                            str(row_pro[4] if len(row_pro) > 4 else ""),   # L: Operador
+                            detectar_entidades(cartera_raw),               # M: Entidad
+                            "",                                            # N: Cta. Destino (se pisa)  
+                            "",                                            # O: Observaciones
+                            "",                                            # P: Transferido (se pisa)
+                            dia_habil,                                     # Q: Nº Día
+                            str(row_pro[8] if len(row_pro) > 8 else ""),   # R: ID
+                            1,                                             # S: Tipo Doc
+                            it["dni"],                                     # T: NUMEDOCU
+                            fecha_fmt,                                     # U: FECHPAGO
+                            "",                                            # V: MONTPAGO (se pisa)
+                            "",                                            # W: TPO_ORIG (se pisa)
+                            "",                                            # X: MANGO
+                            "",                                            # Y: Honorario (se pisa)
+                        ]
+                        base_from = "PRO"
+                    else:
+                        sin_base += 1
+                        marcas_q[it["idx"]] = "❌ HON ERROR: Sin registro base (mes actual, anterior ni PRO)"
+                        continue
 
             # Asegurar longitud exacta
             while len(base_row) < COLS_OUT:
