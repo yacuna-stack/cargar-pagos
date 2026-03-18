@@ -78,7 +78,7 @@ DESTINATARIOS = [
         ]
     },
     {
-        "namePago": "Of. Efectivo Si",
+        "namePago": "Cta. Efectivo Si",
         "patrones": [
         "COMPAÑIA FINANCIERA ARGENTINA SA", "COMPAÑIA FINANCIERA ARGENTINA S.A", "COMPANIA FINANCIERA ARGENTINA S.A.", "COMPA#IA FINANCIERA ARG SA"
         ]
