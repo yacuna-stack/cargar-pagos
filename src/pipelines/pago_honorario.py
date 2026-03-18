@@ -288,7 +288,8 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
             base_row[2] = fecha_fmt     # C Fecha
             base_row[3] = importe_fmt   # D Importe
             base_row[13] = "Banco"      # N
-            base_row[15] = ""           # P limpiar estado
+            base_row[14] = ""           # O Observaciones en blanco
+            base_row[15] = ""           # P limpiar estado (Transferido)
             base_row[16] = dia_habil    # Q Nº Día
             base_row[20] = fecha_fmt    # U FECHPAGO
             base_row[21] = monto_sin    # V MONTPAGO
