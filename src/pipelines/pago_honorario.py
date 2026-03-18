@@ -208,6 +208,9 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
             # 🧠 BUSCAR BASE
             base_row = None
             base_from = hoja_nombre
+            
+            fecha_fmt = formato_fecha_corta(it["dia"], it["mesIdx"])
+            dia_habil = calcular_dia_habil_del_mes(it["dia"], it["mesIdx"], anio) or ""
 
             if it["dni"] in last_row_by_dni:
                 base_row = list(data_mes[last_row_by_dni[it["dni"]]])
@@ -239,9 +242,6 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
                         row_pro = pro_by_dni[it["dni"]]
                         cartera_raw = str(row_pro[9] if len(row_pro) > 9 else "").strip()
                         cartera = "Comafi" if es_banco_comafi(cartera_raw) else cartera_raw
-                        
-                        fecha_fmt = formato_fecha_corta(it["dia"], it["mesIdx"])
-                        dia_habil = calcular_dia_habil_del_mes(it["dia"], it["mesIdx"], anio) or ""
                         
                         base_row = [
                             it["dni"],                                     # A: DNI
@@ -285,13 +285,16 @@ def ejecutar_honorarios(sheets: SheetsIO) -> Dict[str, Any]:
             importe_fmt = extraer_solo_numeros_crudos(it["monto_raw"])
             monto_sin = limpiar_monto_sin_decimales(it["monto_raw"])
 
+            base_row[2] = fecha_fmt     # C Fecha
             base_row[3] = importe_fmt   # D Importe
-            base_row[21] = monto_sin    # V MONTPAGO
-            base_row[23] = ""           # X VACÍA (regla tuya)
-            base_row[15] = ""           # P limpiar estado
-            base_row[24] = True         # Y honorario
             base_row[13] = "Banco"      # N
-            base_row[22] = 2            # W
+            base_row[15] = ""           # P limpiar estado
+            base_row[16] = dia_habil    # Q Nº Día
+            base_row[20] = fecha_fmt    # U FECHPAGO
+            base_row[21] = monto_sin    # V MONTPAGO
+            base_row[22] = 2            # W TPO_ORIG
+            base_row[23] = ""           # X VACÍA (regla tuya)
+            base_row[24] = True         # Y honorario
 
             appends.append(base_row)
 
